@@ -1,0 +1,184 @@
+"""HTTP-эндпоинты аутентификации: регистрация, логин, ротация токенов.
+
+Маршруты регистрируются с префиксом ``/api/v1``:
+``POST /auth/register``, ``POST /auth/login``, ``POST /auth/refresh``,
+``POST /auth/logout``, ``GET /users/me``.
+"""
+import uuid
+from datetime import UTC, datetime
+
+import jwt
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.repositories.auth_repo import AuthRepository
+from app.schemas.auth import (
+    LogoutRequest,
+    RefreshRequest,
+    TokenResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
+    UserResponse,
+)
+from app.services.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
+from app.services.token import generate_opaque_token, hash_token
+
+router = APIRouter(prefix="/api/v1")
+
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
+    """Регистрирует нового пользователя.
+
+    Хэширует пароль (bcrypt) и создаёт запись в ``users``. При дублирующем
+    email возвращает ``409 DUPLICATE_EMAIL``.
+
+    Параметры:
+        payload: Email и пароль (минимум 8 символов).
+        db: Сессия базы данных (из ``Depends``).
+
+    Возвращает:
+        Профиль созданного пользователя (без пароля).
+    """
+    repo = AuthRepository(db)
+    existing = await repo.get_user_by_email(payload.email)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": "DUPLICATE_EMAIL", "message": "Email already registered"}}
+        )
+    hashed = hash_password(payload.password)
+    user = await repo.create_user(email=payload.email, password_hash=hashed, roles=["customer"])
+    await db.commit()
+    return UserResponse(id=str(user.id), email=user.email, roles=user.roles)
+
+@router.post("/auth/login", response_model=TokenResponse)
+async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):
+    """Аутентифицирует пользователя и выдаёт пару токенов.
+
+    Проверяет пароль и активность учётной записи. При неверных учётных данных
+    возвращает ``401 INVALID_CREDENTIALS``.
+
+    Возвращает:
+        JWT access-токен и непрозрачный refresh-токен.
+    """
+    repo = AuthRepository(db)
+    user = await repo.get_user_by_email(payload.email)
+    if not user or not verify_password(payload.password, user.password_hash) or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": "INVALID_CREDENTIALS", "message": "Invalid email, password, or inactive user"}}
+        )
+
+    access_token = create_access_token(user.id, user.roles)
+    plain_refresh, ref_hash = generate_opaque_token()
+    await repo.create_refresh_token(user.id, ref_hash)
+    await db.commit()
+
+    return TokenResponse(access_token=access_token, refresh_token=plain_refresh)
+
+@router.post("/auth/refresh", response_model=TokenResponse)
+async def refresh_tokens(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Выполняет конкуренто-безопасную ротацию refresh-токена.
+
+    Читает токен строкой ``SELECT ... FOR UPDATE``, поэтому при двух
+    одновременных запросах с одним токеном успешен только один (второй
+    получает ``401``). Если обнаружено повторное использование уже отозванного
+    токена, отзывает все refresh-токены пользователя (reuse detection).
+
+    Возвращает:
+        Новую пару токенов.
+
+    Исключения:
+        HTTPException(401): токен не найден, истёк, отозван или
+            владелец неактивен.
+    """
+    repo = AuthRepository(db)
+    ref_hash = hash_token(payload.refresh_token)
+
+    async with db.begin():
+        token_obj = await repo.get_refresh_token_for_update(ref_hash)
+        if not token_obj:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "INVALID_REFRESH_TOKEN", "message": "Refresh token not found"}}
+            )
+
+        # Token Reuse Detection
+        if token_obj.is_revoked:
+            await repo.revoke_all_user_tokens(token_obj.user_id)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "TOKEN_REUSE_DETECTED", "message": "Revoked token reuse detected. All tokens revoked."}}
+            )
+
+        # Expiration check
+        if token_obj.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+            token_obj.is_revoked = True
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "EXPIRED_REFRESH_TOKEN", "message": "Refresh token expired"}}
+            )
+
+        user = await repo.get_user_by_id(token_obj.user_id)
+        if not user or not user.is_active:
+            token_obj.is_revoked = True
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": "INACTIVE_USER", "message": "User is inactive or not found"}}
+            )
+
+        # Rotate
+        token_obj.is_revoked = True
+        plain_new, new_hash = generate_opaque_token()
+        await repo.create_refresh_token(user.id, new_hash)
+        new_access = create_access_token(user.id, user.roles)
+
+    return TokenResponse(access_token=new_access, refresh_token=plain_new)
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
+    """Отзывает refresh-токен (идемпотентно).
+
+    Повторный вызов с тем же токеном снова возвращает ``204``; после
+    отзыва ``POST /auth/refresh`` с этим токеном вернёт ``401``.
+    """
+    repo = AuthRepository(db)
+    ref_hash = hash_token(payload.refresh_token)
+    await repo.revoke_token_by_hash(ref_hash)
+    await db.commit()
+
+@router.get("/users/me", response_model=UserResponse)
+async def get_current_user_profile(authorization: str = Header(...), db: AsyncSession = Depends(get_db)):
+    """Возвращает профиль авторизованного пользователя.
+
+    Доступен только с валидным JWT в заголовке ``Authorization: Bearer ...``.
+    При невалидном/истёкшем токене или неактивном пользователе — ``401``.
+
+    Параметры:
+        authorization: Заголовок ``Authorization``.
+
+    Возвращает:
+        Профиль пользователя (без пароля).
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+    token = authorization.split(" ")[1]
+    try:
+        payload = decode_access_token(token)
+        user_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token")
+
+    repo = AuthRepository(db)
+    user = await repo.get_user_by_id(user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    return UserResponse(id=str(user.id), email=user.email, roles=user.roles)

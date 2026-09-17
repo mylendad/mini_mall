@@ -1,0 +1,25 @@
+[project]
+name = "mini-mall-backend"
+version = "0.1.0"
+description = "Production-like e-commerce microservice platform foundation"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "structlog>=24.1.0",
+    "opentelemetry-api>=1.23.0",
+    "opentelemetry-sdk>=1.23.0",
+    "prometheus-client>=0.20.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.5",
+    "testcontainers>=4.7.1",
+    "ruff>=0.2.2",
+    "httpx>=0.27.0",
+    "pdoc>=14.0.0",
+]

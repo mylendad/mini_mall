@@ -1,0 +1,15 @@
+.git/
+.gitignore
+.venv/
+.opencode/
+openspec/
+**/__pycache__/
+*.pyc
+*.pyo
+*.md
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.env
