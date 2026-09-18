@@ -4,10 +4,9 @@
 базовый класс декларативных моделей и FastAPI-зависимость :func:`get_db`
 для выдачи сессии в обработчиках запросов.
 """
+from app.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-
-from app.config import settings
 
 engine = create_async_engine(settings.database_url, echo=False, future=True)
 """Асинхронный движок SQLAlchemy для PostgreSQL (общий на приложение)."""

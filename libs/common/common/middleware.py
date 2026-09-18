@@ -38,6 +38,9 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             correlation_id=correlation_id,
         )
 
+        request.state.request_id = request_id
+        request.state.correlation_id = correlation_id
+
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Correlation-ID"] = correlation_id

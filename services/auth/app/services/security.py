@@ -1,20 +1,19 @@
 """Утилиты безопасности: хэширование паролей и JWT-access-токены.
 
-Пароли хэшируются напрямую через ``bcrypt`` (без passlib: современные версии
-несовместимы с bcrypt 5.x). Access-токены — PyJWT (HS256) с claims
-``sub``/``roles``/``exp``/``iat``/``jti``; PII в токены не попадает.
+Пароли хэшируются через ``passlib[bcrypt]`` (обёртка над bcrypt).
+Access-токены — PyJWT (HS256) с claims ``sub``/``roles``/``exp``/``iat``/``jti``;
+PII в токены не попадает.
 """
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import bcrypt
 import jwt
-
 from app.config import settings
+from passlib.hash import bcrypt
 
 
 def hash_password(password: str) -> str:
-    """Хэширует пароль через bcrypt с уникальной солью.
+    """Хэширует пароль через passlib[bcrypt] с уникальной солью.
 
     Параметры:
         password: Пароль в открытом виде.
@@ -22,7 +21,8 @@ def hash_password(password: str) -> str:
     Возвращает:
         Строку формата bcrypt ``$2b$...``.
     """
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hash(password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Проверяет пароль против сохранённого хэша.
@@ -35,8 +35,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         ``True`` при совпадении; ``False`` при несовпадении или неверном хэше.
     """
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
-    except ValueError:
+        return bcrypt.verify(plain_password, hashed_password)
+    except (ValueError, TypeError):
         return False
 
 def create_access_token(user_id: uuid.UUID, roles: list[str]) -> str:

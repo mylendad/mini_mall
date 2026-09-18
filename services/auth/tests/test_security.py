@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-
 from app.config import settings
 from app.services.security import (
     create_access_token,

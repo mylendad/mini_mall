@@ -6,12 +6,11 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from app.config import settings
+from app.models.user import RefreshToken, User
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-
-from app.config import settings
-from app.models.user import RefreshToken, User
 
 
 class AuthRepository:

@@ -8,17 +8,13 @@ import asyncio
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-# TODO: `testcontainers.postgres` is deprecated. Migrate to
-# `testcontainers.community.postgres` (import `PostgresContainer` from there).
-from testcontainers.postgres import PostgresContainer
-
 from app import database, main
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.community.postgres import PostgresContainer
 
 
 @pytest.fixture(scope="session")
@@ -83,6 +79,7 @@ async def test_register_and_login(client):
     data = response.json()
     assert data["email"] == email
     assert data["roles"] == ["customer"]
+    user_id = data["id"]
 
     # Duplicate register -> 409
     response = await client.post("/api/v1/auth/register", json={"email": email, "password": password})
@@ -95,12 +92,15 @@ async def test_register_and_login(client):
     assert "access_token" in tokens
     assert "refresh_token" in tokens
 
-    # Get /users/me
-    access_token = tokens["access_token"]
-    response = await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {access_token}"})
+    # Get /users/me via trusted gateway headers
+    response = await client.get(
+        "/api/v1/users/me",
+        headers={"X-User-ID": user_id, "X-User-Roles": "customer"},
+    )
     assert response.status_code == 200
     user_me = response.json()
     assert user_me["email"] == email
+    assert user_me["roles"] == ["customer"]
 
     # Refresh token
     refresh_token = tokens["refresh_token"]
@@ -113,6 +113,20 @@ async def test_register_and_login(client):
     # Logout
     response = await client.post("/api/v1/auth/logout", json={"refresh_token": new_tokens["refresh_token"]})
     assert response.status_code == 204
+
+@pytest.mark.asyncio
+async def test_users_me_requires_trusted_headers(client):
+    response = await client.get("/api/v1/users/me", headers={"X-Request-ID": "req-123"})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "MISSING_USER_CONTEXT"
+    assert response.json()["request_id"] == "req-123"
+
+    response = await client.get(
+        "/api/v1/users/me",
+        headers={"X-User-ID": "not-a-uuid", "X-User-Roles": "customer"},
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_USER_CONTEXT"
 
 @pytest.mark.asyncio
 async def test_token_reuse_detection(client):
