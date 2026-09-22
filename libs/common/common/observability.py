@@ -3,6 +3,7 @@
 Предоставляет счётчик запросов и гистограмму задержек, а также middleware
 для автоматического сбора этих метрик со всех маршрутов приложения.
 """
+
 import time
 
 from fastapi import Request, Response
@@ -10,16 +11,15 @@ from prometheus_client import Counter, Histogram
 from starlette.middleware.base import BaseHTTPMiddleware
 
 REQUEST_COUNT = Counter(
-    "http_requests_total",
-    "Total HTTP requests",
-    ["method", "endpoint", "status_code"]
+    "http_requests_total", "Total HTTP requests", ["method", "endpoint", "status_code"]
 )
 
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds",
     "HTTP request latency in seconds",
-    ["method", "endpoint"]
+    ["method", "endpoint"],
 )
+
 
 class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
     """Считает количество запросов и их задержку.
@@ -38,9 +38,13 @@ class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
 
         Возвращает:
             HTTP-ответ (метрики обновляются до возврата).
+
+        Метка ``endpoint`` — шаблон роута (``/products/{product_id}``), а не
+        сырой путь: UUID-параметры не создают новую серию метрик на каждый id.
+        Для неразрешённых маршрутов (``scope["route"]`` отсутствует) — исходный
+        путь.
         """
         method = request.method
-        path = request.url.path
         start_time = time.time()
 
         response = await call_next(request)
@@ -48,7 +52,11 @@ class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
         duration = time.time() - start_time
         status_code = str(response.status_code)
 
-        REQUEST_COUNT.labels(method=method, endpoint=path, status_code=status_code).inc()
-        REQUEST_LATENCY.labels(method=method, endpoint=path).observe(duration)
+        route = request.scope.get("route")
+        endpoint = getattr(route, "path", None) or request.url.path
+        REQUEST_COUNT.labels(
+            method=method, endpoint=endpoint, status_code=status_code
+        ).inc()
+        REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(duration)
 
         return response

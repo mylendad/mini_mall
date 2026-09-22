@@ -1,7 +1,7 @@
 [project]
-name = "auth-service"
+name = "catalog-service"
 version = "0.1.0"
-description = "Autonomous Authentication Service"
+description = "Autonomous Catalog Service"
 requires-python = ">=3.12"
 dependencies = [
     "common>=0.1.0",
@@ -12,11 +12,16 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.27",
     "asyncpg>=0.29.0",
     "alembic>=1.13.1",
-    "pyjwt>=2.8.0",
-    "passlib[bcrypt]>=1.7.4",
-    "bcrypt==4.0.1",
+    "elasticsearch>=8.12.0,<9",
+    "aiohttp>=3.9.0",
     "structlog>=24.1.0",
     "prometheus-client>=0.20.0",
+    "redis>=5.0.0",
+    "opentelemetry-api>=1.26.0",
+    "opentelemetry-sdk>=1.26.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.26.0",
+    "opentelemetry-instrumentation-fastapi>=0.47b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
 ]
 
 [dependency-groups]
@@ -29,16 +34,15 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-asyncio_mode = "strict"
+asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 
-[tool.ruff.lint.per-file-ignores]
-"app/api/*.py" = ["B008"]
-"app/main.py" = ["BLE001"]
-
 [tool.uv.sources]
 common = { path = "../../libs/common", editable = true }
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/*.py" = ["B008"]
 
 [tool.setuptools.packages.find]
 where = ["."]

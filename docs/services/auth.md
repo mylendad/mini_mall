@@ -40,7 +40,14 @@ services/auth/
 сервиса (см. [Быстрый старт](getting-started.md) — таблица переменных).
 
 Ключевое: `JWT_SECRET` задаётся в production явно и должен быть **≥ 32 байт**
-(иначе PyJWT предупреждает об ослабленной подписи).
+(иначе PyJWT предупреждает об ослабленной подписи). В `production` сервис
+отказывается стартовать с дефолтным `JWT_SECRET` и без `GATEWAY_SECRET`
+(`app/config.py`, `Settings._production_requires_real_secrets`).
+
+`GATEWAY_SECRET` — общий секрет API Gateway для доверенных заголовков
+`X-User-ID`/`X-User-Roles` (`GET /users/me`). Если он задан, запрос обязан
+предъявить его в `X-Gateway-Secret`, иначе — `401 INVALID_GATEWAY_SECRET`.
+Пустое значение — только для development (доверие без проверки).
 
 ## База данных
 

@@ -3,15 +3,16 @@
 Проверяют генерацию/проверку bcrypt-хэшей, JWT access-токенов (TTL, подпись)
 и непрозрачных refresh-токенов. Не требуют базы данных.
 """
+
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+
 from app.config import settings
 from app.services.security import (
     create_access_token,
-    decode_access_token,
     hash_password,
     verify_password,
 )
@@ -32,7 +33,7 @@ def test_hash_password_uses_unique_salt():
 def test_create_and_decode_access_token():
     user_id = uuid.uuid4()
     token = create_access_token(user_id, ["customer"])
-    payload = decode_access_token(token)
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     assert payload["sub"] == str(user_id)
     assert payload["roles"] == ["customer"]
     assert {"exp", "iat", "jti"}.issubset(payload)
@@ -55,13 +56,15 @@ def test_decode_rejects_expired_token():
         algorithm="HS256",
     )
     with pytest.raises(jwt.ExpiredSignatureError):
-        decode_access_token(expired)
+        jwt.decode(expired, settings.jwt_secret, algorithms=["HS256"])
 
 
 def test_decode_rejects_wrong_secret():
     token = create_access_token(uuid.uuid4(), ["customer"])
     with pytest.raises(jwt.InvalidSignatureError):
-        jwt.decode(token, "wrong-secret-that-is-long-enough-123456789", algorithms=["HS256"])
+        jwt.decode(
+            token, "wrong-secret-that-is-long-enough-123456789", algorithms=["HS256"]
+        )
 
 
 def test_generate_opaque_token_unique_and_hashed():

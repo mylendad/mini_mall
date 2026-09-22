@@ -4,10 +4,16 @@
 ``POST /auth/register``, ``POST /auth/login``, ``POST /auth/refresh``,
 ``POST /auth/logout``, ``GET /users/me``.
 """
+
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
 from app.database import get_db
 from app.errors import error_detail
 from app.repositories.auth_repo import AuthRepository
@@ -25,13 +31,13 @@ from app.services.security import (
     verify_password,
 )
 from app.services.token import generate_opaque_token, hash_token
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/v1")
 
-@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
     """Регистрирует нового пользователя.
 
@@ -50,19 +56,22 @@ async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("DUPLICATE_EMAIL", "Email already registered")
+            detail=error_detail("DUPLICATE_EMAIL", "Email already registered"),
         )
     hashed = hash_password(payload.password)
-    user = await repo.create_user(email=payload.email, password_hash=hashed, roles=["customer"])
     try:
+        user = await repo.create_user(
+            email=payload.email, password_hash=hashed, roles=["customer"]
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("DUPLICATE_EMAIL", "Email already registered")
+            detail=error_detail("DUPLICATE_EMAIL", "Email already registered"),
         )
     return UserResponse(id=str(user.id), email=user.email, roles=user.roles)
+
 
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):
@@ -76,10 +85,16 @@ async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):
     """
     repo = AuthRepository(db)
     user = await repo.get_user_by_email(payload.email)
-    if not user or not verify_password(payload.password, user.password_hash) or not user.is_active:
+    if (
+        not user
+        or not verify_password(payload.password, user.password_hash)
+        or not user.is_active
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail("INVALID_CREDENTIALS", "Invalid email, password, or inactive user")
+            detail=error_detail(
+                "INVALID_CREDENTIALS", "Invalid email, password, or inactive user"
+            ),
         )
 
     access_token = create_access_token(user.id, user.roles)
@@ -89,6 +104,7 @@ async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):
 
     return TokenResponse(access_token=access_token, refresh_token=plain_refresh)
 
+
 @router.post("/auth/refresh", response_model=TokenResponse)
 async def refresh_tokens(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """Выполняет конкуренто-безопасную ротацию refresh-токена.
@@ -97,6 +113,11 @@ async def refresh_tokens(payload: RefreshRequest, db: AsyncSession = Depends(get
     одновременных запросах с одним токеном успешен только один (второй
     получает ``401``). Если обнаружено повторное использование уже отозванного
     токена, отзывает все refresh-токены пользователя (reuse detection).
+
+    Вся мутация выполняется в одной транзакции (:func:`AsyncSession.begin`);
+    ошибка оформляется после выхода из блока, поэтому изменения веток
+    ``expired``/``inactive`` (пометка токена отозванным) персистятся, а не
+    откатываются вместе с rolled-back исключением.
 
     Возвращает:
         Новую пару токенов.
@@ -108,46 +129,55 @@ async def refresh_tokens(payload: RefreshRequest, db: AsyncSession = Depends(get
     repo = AuthRepository(db)
     ref_hash = hash_token(payload.refresh_token)
 
+    new_access: str | None = None
+    plain_new: str | None = None
+    error: HTTPException | None = None
+
     async with db.begin():
         token_obj = await repo.get_refresh_token_for_update(ref_hash)
         if not token_obj:
-            raise HTTPException(
+            error = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("INVALID_REFRESH_TOKEN", "Refresh token not found")
+                detail=error_detail("INVALID_REFRESH_TOKEN", "Refresh token not found"),
             )
-
-        # Token Reuse Detection
-        if token_obj.is_revoked:
+        elif token_obj.is_revoked:
+            # Token Reuse Detection — ретрансляция отозванного токена считается
+            # признаком кражи: отзываем все refresh-токены пользователя.
             await repo.revoke_all_user_tokens(token_obj.user_id)
-            await db.commit()
-            raise HTTPException(
+            error = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("TOKEN_REUSE_DETECTED", "Revoked token reuse detected. All tokens revoked.")
+                detail=error_detail(
+                    "TOKEN_REUSE_DETECTED",
+                    "Revoked token reuse detected. All tokens revoked.",
+                ),
             )
-
-        # Expiration check
-        if token_obj.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+        elif token_obj.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             token_obj.is_revoked = True
-            raise HTTPException(
+            error = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("EXPIRED_REFRESH_TOKEN", "Refresh token expired")
+                detail=error_detail("EXPIRED_REFRESH_TOKEN", "Refresh token expired"),
             )
+        else:
+            user = await repo.get_user_by_id(token_obj.user_id)
+            if not user or not user.is_active:
+                token_obj.is_revoked = True
+                error = HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=error_detail(
+                        "INACTIVE_USER", "User is inactive or not found"
+                    ),
+                )
+            else:
+                # Rotate
+                token_obj.is_revoked = True
+                plain_new, new_hash = generate_opaque_token()
+                await repo.create_refresh_token(user.id, new_hash)
+                new_access = create_access_token(user.id, user.roles)
 
-        user = await repo.get_user_by_id(token_obj.user_id)
-        if not user or not user.is_active:
-            token_obj.is_revoked = True
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("INACTIVE_USER", "User is inactive or not found")
-            )
-
-        # Rotate
-        token_obj.is_revoked = True
-        plain_new, new_hash = generate_opaque_token()
-        await repo.create_refresh_token(user.id, new_hash)
-        new_access = create_access_token(user.id, user.roles)
-
+    if error is not None:
+        raise error
     return TokenResponse(access_token=new_access, refresh_token=plain_new)
+
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
@@ -161,6 +191,7 @@ async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
     await repo.revoke_token_by_hash(ref_hash)
     await db.commit()
 
+
 @dataclass
 class TrustedUser:
     """Идентичность, переданная API Gateway в доверенных заголовках.
@@ -169,21 +200,27 @@ class TrustedUser:
         user_id: UUID пользователя (из ``X-User-ID``).
         roles: Роли пользователя (из ``X-User-Roles``).
     """
+
     user_id: uuid.UUID
     roles: list[str]
 
 
 def get_trusted_user(
+    x_gateway_secret: str | None = Header(default=None, alias="X-Gateway-Secret"),
     x_user_id: str | None = Header(default=None, alias="X-User-ID"),
     x_user_roles: str | None = Header(default=None, alias="X-User-Roles"),
 ) -> TrustedUser:
     """Извлекает идентичность из доверенных заголовков API Gateway.
 
     Заголовки ``X-User-ID`` и ``X-User-Roles`` инжектирует API Gateway после
-    аутентификации. При их отсутствии или некорректном формате возвращается
-    ``401``.
+    аутентификации. Если задан ``settings.gateway_secret``, запрос обязан
+    предъявить его в ``X-Gateway-Secret`` — иначе любой клиент, достучавшийся
+    до сервиса напрямую, подделал бы чужую личность. В production секрет
+    обязателен (fail-closed, см. ``app.config``); в development при пустом
+    секрете доступ без него разрешён.
 
     Параметры:
+        x_gateway_secret: Секрет API Gateway (заголовок ``X-Gateway-Secret``).
         x_user_id: UUID пользователя.
         x_user_roles: Роли через запятую.
 
@@ -191,26 +228,42 @@ def get_trusted_user(
         Идентичность :class:`TrustedUser`.
 
     Исключения:
-        HTTPException(401): заголовки отсутствуют или ``X-User-ID`` не UUID.
+        HTTPException(401): секрет не совпадает либо заголовки отсутствуют
+            или ``X-User-ID`` не UUID.
     """
+    if settings.gateway_secret and x_gateway_secret != settings.gateway_secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error_detail(
+                "INVALID_GATEWAY_SECRET",
+                "X-Gateway-Secret header is invalid or missing",
+            ),
+        )
     if not x_user_id or not x_user_roles:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail("MISSING_USER_CONTEXT", "X-User-ID and X-User-Roles headers are required"),
+            detail=error_detail(
+                "MISSING_USER_CONTEXT",
+                "X-User-ID and X-User-Roles headers are required",
+            ),
         )
     try:
         user_id = uuid.UUID(x_user_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail("INVALID_USER_CONTEXT", "X-User-ID header must contain a valid UUID"),
+            detail=error_detail(
+                "INVALID_USER_CONTEXT", "X-User-ID header must contain a valid UUID"
+            ),
         )
     roles = [role.strip() for role in x_user_roles.split(",") if role.strip()]
     return TrustedUser(user_id=user_id, roles=roles)
 
 
 @router.get("/users/me", response_model=UserResponse)
-async def get_current_user_profile(user: TrustedUser = Depends(get_trusted_user), db: AsyncSession = Depends(get_db)):
+async def get_current_user_profile(
+    user: TrustedUser = Depends(get_trusted_user), db: AsyncSession = Depends(get_db)
+):
     """Возвращает профиль авторизованного пользователя.
 
     Идентичность берётся из доверенных заголовков ``X-User-ID``/``X-User-Roles``,
@@ -227,6 +280,9 @@ async def get_current_user_profile(user: TrustedUser = Depends(get_trusted_user)
     repo = AuthRepository(db)
     db_user = await repo.get_user_by_id(user.user_id)
     if not db_user or not db_user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=error_detail("USER_NOT_FOUND", "User not found or inactive"))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error_detail("USER_NOT_FOUND", "User not found or inactive"),
+        )
 
     return UserResponse(id=str(db_user.id), email=db_user.email, roles=user.roles)

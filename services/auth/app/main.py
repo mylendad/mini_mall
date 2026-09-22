@@ -4,11 +4,10 @@
 и обработчики ошибок) через :func:`create_app` и создаёт глобальный
 экземпляр ``app`` для ASGI-сервера.
 """
+
 from contextlib import asynccontextmanager
 
-from app.api.auth import router as auth_router
-from app.config import settings
-from app.database import engine
+import structlog
 from common.errors import ErrorDetail, ErrorResponse
 from common.logging import setup_logging
 from common.middleware import RequestIDMiddleware
@@ -19,6 +18,12 @@ from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
+
+from app.api.auth import router as auth_router
+from app.config import settings
+from app.database import engine
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -39,10 +44,16 @@ def _request_id(request: Request) -> str:
     Значение кладётся в ``request.state`` middleware :class:`RequestIDMiddleware`;
     при отсутствии используется заголовок ``X-Request-ID``.
     """
-    return getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or "unknown"
+    return (
+        getattr(request.state, "request_id", None)
+        or request.headers.get("X-Request-ID")
+        or "unknown"
+    )
 
 
-def _error_response(status_code: int, error: ErrorDetail, request: Request) -> JSONResponse:
+def _error_response(
+    status_code: int, error: ErrorDetail, request: Request
+) -> JSONResponse:
     """Формирует ответ об ошибке в стандартном формате.
 
     Собирает конверт :class:`common.errors.ErrorResponse` с ``request_id``
@@ -58,7 +69,9 @@ def _error_response(status_code: int, error: ErrorDetail, request: Request) -> J
     """
     return JSONResponse(
         status_code=status_code,
-        content=ErrorResponse(error=error, request_id=_request_id(request)).model_dump(),
+        content=ErrorResponse(
+            error=error, request_id=_request_id(request)
+        ).model_dump(),
     )
 
 
@@ -82,19 +95,34 @@ def create_app() -> FastAPI:
         if isinstance(exc.detail, dict):
             error_data = exc.detail
         else:
-            error_data = {"code": "HTTP_ERROR", "message": str(exc.detail), "details": None}
+            error_data = {
+                "code": "HTTP_ERROR",
+                "message": str(exc.detail),
+                "details": None,
+            }
         return _error_response(exc.status_code, ErrorDetail(**error_data), request)
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
         return _error_response(
             422,
-            ErrorDetail(code="VALIDATION_ERROR", message="Request validation failed", details=exc.errors()),
+            ErrorDetail(
+                code="VALIDATION_ERROR",
+                message="Request validation failed",
+                details=exc.errors(),
+            ),
             request,
         )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.exception(
+            "Unhandled exception",
+            method=request.method,
+            path=request.url.path,
+        )
         return _error_response(
             500,
             ErrorDetail(code="INTERNAL_ERROR", message="Internal server error"),
@@ -112,7 +140,9 @@ def create_app() -> FastAPI:
                 await conn.exec_driver_sql("SELECT 1")
             return {"status": "ready"}
         except Exception as e:
-            return JSONResponse(status_code=503, content={"status": "unhealthy", "detail": str(e)})
+            return JSONResponse(
+                status_code=503, content={"status": "unhealthy", "detail": str(e)}
+            )
 
     @app.get("/metrics")
     async def metrics():
@@ -121,5 +151,6 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
 
     return app
+
 
 app = create_app()

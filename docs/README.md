@@ -11,8 +11,10 @@
 | [Быстрый старт](getting-started.md) | Установка окружения, тесты, локальный запуск сервиса |
 | [Общая библиотека `common`](libs-common.md) | Что лежит в `libs/common`, как сервисы её подключают, правила расширения |
 | [Сервис `auth`](services/auth.md) | Назначение, конфигурация, БД, API, безопасность, тесты, миграции |
+| [Сервис `catalog`](services/catalog.md) | Каталог продуктов и категорий: PG → ES синхронизация (outbox), поиск, admin-reindex, тесты |
 | [Контейнеризация](docker.md) | Multi-stage Dockerfile, сборка из корня, compose |
 | [Генерация API-документации](code-reference.md) | pdoc: как сгенерировать документацию из docstrings |
+| [ADR](adr/0001-catalog-service-review.md) | Реестр архитектурных решений (результаты ревью): [ADR-0001: catalog-service](adr/0001-catalog-service-review.md), [ADR-0002: auth-service](adr/0002-auth-service-review.md) |
 
 ## Соглашения
 

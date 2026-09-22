@@ -4,23 +4,32 @@
 API-сценарии: регистрация/логин, ротация refresh-токена, конкурентная
 ротация, повторное использование токена и идемпотентный логаут.
 """
+
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.community.postgres import PostgresContainer
+
 from app import database, main
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from testcontainers.community.postgres import PostgresContainer
+from app.models.user import RefreshToken, User
+from app.services.token import generate_opaque_token
 
 
 @pytest.fixture(scope="session")
 def postgres_container():
-    with PostgresContainer("postgres:15-alpine", username="test", password="test", dbname="test") as postgres:
+    with PostgresContainer(
+        "postgres:15-alpine", username="test", password="test", dbname="test"
+    ) as postgres:
         yield postgres
+
 
 @pytest_asyncio.fixture(scope="session")
 async def db_engine(postgres_container):
@@ -28,7 +37,9 @@ async def db_engine(postgres_container):
     settings.database_url = url
     engine = create_async_engine(url, future=True, echo=False)
     database.engine = engine
-    database.async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    database.async_session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
     main.engine = engine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -37,6 +48,7 @@ async def db_engine(postgres_container):
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
+
 @pytest_asyncio.fixture
 async def db_session(db_engine):
     async_session = async_sessionmaker(db_engine, expire_on_commit=False)
@@ -44,19 +56,23 @@ async def db_session(db_engine):
         yield session
         await session.rollback()
 
+
 @pytest_asyncio.fixture
 async def client(db_engine):
     async_session = async_sessionmaker(db_engine, expire_on_commit=False)
-    
+
     async def override_get_db():
         async with async_session() as session:
             yield session
             await session.commit()
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac
     app.dependency_overrides.clear()
+
 
 @pytest.mark.asyncio
 async def test_health_checks(client):
@@ -68,13 +84,16 @@ async def test_health_checks(client):
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
 
+
 @pytest.mark.asyncio
 async def test_register_and_login(client):
     email = "test@example.com"
     password = "securepassword123"
 
     # Register
-    response = await client.post("/api/v1/auth/register", json={"email": email, "password": password})
+    response = await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
     assert response.status_code == 201
     data = response.json()
     assert data["email"] == email
@@ -82,11 +101,15 @@ async def test_register_and_login(client):
     user_id = data["id"]
 
     # Duplicate register -> 409
-    response = await client.post("/api/v1/auth/register", json={"email": email, "password": password})
+    response = await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
     assert response.status_code == 409
 
     # Login
-    response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    response = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
     assert response.status_code == 200
     tokens = response.json()
     assert "access_token" in tokens
@@ -104,15 +127,20 @@ async def test_register_and_login(client):
 
     # Refresh token
     refresh_token = tokens["refresh_token"]
-    response = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    response = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+    )
     assert response.status_code == 200
     new_tokens = response.json()
     assert "access_token" in new_tokens
     assert "refresh_token" in new_tokens
 
     # Logout
-    response = await client.post("/api/v1/auth/logout", json={"refresh_token": new_tokens["refresh_token"]})
+    response = await client.post(
+        "/api/v1/auth/logout", json={"refresh_token": new_tokens["refresh_token"]}
+    )
     assert response.status_code == 204
+
 
 @pytest.mark.asyncio
 async def test_users_me_requires_trusted_headers(client):
@@ -128,36 +156,52 @@ async def test_users_me_requires_trusted_headers(client):
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "INVALID_USER_CONTEXT"
 
+
 @pytest.mark.asyncio
 async def test_token_reuse_detection(client):
     email = "reuse@example.com"
     password = "securepassword123"
 
-    await client.post("/api/v1/auth/register", json={"email": email, "password": password})
-    login_resp = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    login_resp = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
     tokens = login_resp.json()
     ref_token_1 = tokens["refresh_token"]
 
     # First refresh succeeds
-    refresh_resp_1 = await client.post("/api/v1/auth/refresh", json={"refresh_token": ref_token_1})
+    refresh_resp_1 = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": ref_token_1}
+    )
     assert refresh_resp_1.status_code == 200
     ref_token_2 = refresh_resp_1.json()["refresh_token"]
 
     # Reusing ref_token_1 (already revoked) triggers reuse detection -> 401
-    reuse_resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": ref_token_1})
+    reuse_resp = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": ref_token_1}
+    )
     assert reuse_resp.status_code == 401
 
     # ref_token_2 should also be revoked now due to reuse detection
-    try_ref_2 = await client.post("/api/v1/auth/refresh", json={"refresh_token": ref_token_2})
+    try_ref_2 = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": ref_token_2}
+    )
     assert try_ref_2.status_code == 401
+
 
 @pytest.mark.asyncio
 async def test_concurrent_refresh_single_wins(client):
     email = "concurrent@example.com"
     password = "securepassword123"
 
-    await client.post("/api/v1/auth/register", json={"email": email, "password": password})
-    login_resp = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    login_resp = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
     refresh_token = login_resp.json()["refresh_token"]
 
     resp_1, resp_2 = await asyncio.gather(
@@ -166,20 +210,133 @@ async def test_concurrent_refresh_single_wins(client):
     )
     assert sorted([resp_1.status_code, resp_2.status_code]) == [200, 401]
 
+
 @pytest.mark.asyncio
 async def test_logout_idempotent(client):
     email = "logout@example.com"
     password = "securepassword123"
 
-    await client.post("/api/v1/auth/register", json={"email": email, "password": password})
-    login_resp = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    login_resp = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
     refresh_token = login_resp.json()["refresh_token"]
 
-    resp_1 = await client.post("/api/v1/auth/logout", json={"refresh_token": refresh_token})
+    resp_1 = await client.post(
+        "/api/v1/auth/logout", json={"refresh_token": refresh_token}
+    )
     assert resp_1.status_code == 204
 
-    resp_2 = await client.post("/api/v1/auth/logout", json={"refresh_token": refresh_token})
+    resp_2 = await client.post(
+        "/api/v1/auth/logout", json={"refresh_token": refresh_token}
+    )
     assert resp_2.status_code == 204
 
-    refresh_resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    refresh_resp = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+    )
     assert refresh_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_same_email_one_wins(client):
+    email = "race@example.com"
+    password = "securepassword123"
+
+    resp_1, resp_2 = await asyncio.gather(
+        client.post(
+            "/api/v1/auth/register", json={"email": email, "password": password}
+        ),
+        client.post(
+            "/api/v1/auth/register", json={"email": email, "password": password}
+        ),
+    )
+    # Оба пре-чека могут вернуть None; уникальное ограничение срабатывает на
+    # flush. Один запрос — 201, второй обязан быть 409 (не 500).
+    assert sorted([resp_1.status_code, resp_2.status_code]) == [201, 409]
+    errored = resp_1 if resp_1.status_code == 409 else resp_2
+    assert errored.json()["error"]["code"] == "DUPLICATE_EMAIL"
+
+
+@pytest.mark.asyncio
+async def test_refresh_expired_token_rejected(client, db_session):
+    email = "expired@example.com"
+    password = "securepassword123"
+
+    await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    result = await db_session.execute(select(User).where(User.email == email))
+    db_user = result.scalars().first()
+    assert db_user is not None
+
+    # Вставляем уже истёкший refresh-токен напрямую в БД.
+    plain, token_hash = generate_opaque_token()
+    db_session.add(
+        RefreshToken(
+            user_id=db_user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(UTC) - timedelta(minutes=5),
+            is_revoked=False,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.post("/api/v1/auth/refresh", json={"refresh_token": plain})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "EXPIRED_REFRESH_TOKEN"
+
+
+@pytest.mark.asyncio
+async def test_users_me_gateway_secret_boundary(client):
+    email = "secret@example.com"
+    password = "securepassword123"
+
+    register_resp = await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    real_user_id = register_resp.json()["id"]
+
+    # В development (пустой gateway_secret) доверенные заголовки работают.
+    me_ok = await client.get(
+        "/api/v1/users/me",
+        headers={"X-User-ID": real_user_id, "X-User-Roles": "customer"},
+    )
+    assert me_ok.status_code == 200
+    assert me_ok.json()["email"] == email
+
+    # С включённым секретом прямой доступ без правильного X-Gateway-Secret — 401.
+    old_secret = settings.gateway_secret
+    settings.gateway_secret = "test-gateway-secret"
+    try:
+        no_secret = await client.get(
+            "/api/v1/users/me",
+            headers={"X-User-ID": real_user_id, "X-User-Roles": "customer"},
+        )
+        assert no_secret.status_code == 401
+        assert no_secret.json()["error"]["code"] == "INVALID_GATEWAY_SECRET"
+
+        wrong_secret = await client.get(
+            "/api/v1/users/me",
+            headers={
+                "X-User-ID": real_user_id,
+                "X-User-Roles": "customer",
+                "X-Gateway-Secret": "wrong-secret",
+            },
+        )
+        assert wrong_secret.status_code == 401
+
+        with_secret = await client.get(
+            "/api/v1/users/me",
+            headers={
+                "X-User-ID": real_user_id,
+                "X-User-Roles": "customer",
+                "X-Gateway-Secret": "test-gateway-secret",
+            },
+        )
+        assert with_secret.status_code == 200
+        assert with_secret.json()["email"] == email
+    finally:
+        settings.gateway_secret = old_secret

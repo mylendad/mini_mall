@@ -11,6 +11,7 @@
 добавляется глобальным обработчиком исключений в ``app.main`` из
 ``request.state.request_id``.
 """
+
 from common.errors import ErrorDetail
 
 

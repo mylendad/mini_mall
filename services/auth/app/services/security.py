@@ -4,12 +4,14 @@
 Access-токены — PyJWT (HS256) с claims ``sub``/``roles``/``exp``/``iat``/``jti``;
 PII в токены не попадает.
 """
+
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from app.config import settings
 from passlib.hash import bcrypt
+
+from app.config import settings
 
 
 def hash_password(password: str) -> str:
@@ -39,6 +41,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except (ValueError, TypeError):
         return False
 
+
 def create_access_token(user_id: uuid.UUID, roles: list[str]) -> str:
     """Создаёт JWT access-токен (HS256).
 
@@ -56,20 +59,6 @@ def create_access_token(user_id: uuid.UUID, roles: list[str]) -> str:
         "roles": roles,
         "exp": expire,
         "iat": now,
-        "jti": str(uuid.uuid4())
+        "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-
-def decode_access_token(token: str) -> dict:
-    """Проверяет подпись и декодирует JWT.
-
-    Параметры:
-        token: JWT-строка.
-
-    Возвращает:
-        Словарь claims.
-
-    Исключения:
-        jwt.PyJWTError: при истёкшем, неверно подписанном или мусорном токене.
-    """
-    return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
