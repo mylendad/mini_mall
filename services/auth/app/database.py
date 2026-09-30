@@ -5,8 +5,13 @@
 для выдачи сессии в обработчиках запросов.
 """
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.asyncio import (
+    AsyncAttrs,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
@@ -18,8 +23,9 @@ async_session_maker = async_sessionmaker(
 )
 """Фабрика асинхронных сессий; создаёт сессию с ``expire_on_commit=False``."""
 
-Base = declarative_base()
-"""Базовый класс декларативных моделей (используется моделями и Alembic)."""
+
+class Base(AsyncAttrs, DeclarativeBase):
+    """Базовый класс декларативных моделей (используется моделями и Alembic)."""
 
 
 async def get_db() -> AsyncSession:

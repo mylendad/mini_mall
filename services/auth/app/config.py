@@ -29,9 +29,8 @@ class Settings(BaseAppSettings):
     """
 
     app_name: str = "auth-service"
-    database_url: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:5432/mini_mall_auth"
-    )
+    database_url: str
+
     jwt_secret: str = DEFAULT_JWT_SECRET
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
