@@ -131,13 +131,14 @@ def elasticsearch_container():
             mem_limit="2G",
         )
         container.with_env("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
-        # На машинах с почти занятым диском ES по умолчанию не аллоцирует
-        # шарды (high watermark 90% / <22.3Gb free) и индекс застревает в red.
-        container.with_env("cluster.routing.allocation.disk.watermark.low", "90%")
-        container.with_env("cluster.routing.allocation.disk.watermark.high", "95%")
-        container.with_env(
-            "cluster.routing.allocation.disk.watermark.flood_stage", "98%"
-        )
+        # Дисковые watermark'и отключены полностью. На тестовой машине корень
+        # может быть заполнен больше чем на 95% (сборочные кэши, образы docker),
+        # и тогда ES перестаёт выделять шарды: индекс остаётся red, а
+        # ``cluster.health(wait_for_status="green")`` упирается в таймаут.
+        # Поднимать сами проценты (85/90/95 -> 90/95/98) не помогает — узел всё
+        # равно выше порога. Тестовому индексу диск не нужен, поэтому
+        # ограничение снимаем целиком вместо подбора значений.
+        container.with_env("cluster.routing.allocation.disk.threshold_enabled", "false")
         container.start()
     except Exception as exc:  # noqa: BLE001 - докладовать о невозможности запуска
         pytest.skip(f"Cannot start Elasticsearch container: {exc}")

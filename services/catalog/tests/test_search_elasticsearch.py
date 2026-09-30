@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
 from app import elasticsearch as es
@@ -68,7 +68,7 @@ async def _create_product(
     return resp.json()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def es_index(es_client):
     await es.delete_index(es_client)
     await ensure_index_fn(es_client)
@@ -79,7 +79,7 @@ async def es_index(es_client):
     yield
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _clean_catalog_db(db_session):
     """Очищает каталог перед каждым тестом поиска.
 

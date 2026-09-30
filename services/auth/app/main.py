@@ -106,12 +106,21 @@ def create_app() -> FastAPI:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ):
+        # ``exc.errors()`` возвращает список, а ``ErrorDetail.details`` — словарь,
+        # поэтому заворачиваем в ``{"errors": [...]}``. Из каждой ошибки оставляем
+        # только безопасные поля: ``input`` может содержать plaintext значения
+        # (например, пароль), а ``ctx`` — сырые исключения (``ValueError``), которые
+        # не сериализуются в JSON. Сообщение уже есть в ``msg``.
+        errors = [
+            {key: err[key] for key in ("type", "loc", "msg") if key in err}
+            for err in exc.errors()
+        ]
         return _error_response(
             422,
             ErrorDetail(
                 code="VALIDATION_ERROR",
                 message="Request validation failed",
-                details=exc.errors(),
+                details={"errors": errors},
             ),
             request,
         )

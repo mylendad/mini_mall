@@ -4,7 +4,9 @@
 и структуру ответов, в том числе пары токенов.
 """
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class UserRegisterRequest(BaseModel):
@@ -17,6 +19,39 @@ class UserRegisterRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        """Проверяет пароль на соответствие политикам сложности.
+
+        Пароль должен содержать символы разных регистров, цифры и спецсимволы.
+
+        Параметры:
+            v: Входящая строка с паролем.
+
+        Возвращает:
+            Оригинальную строку пароля при успешной валидации.
+
+        Исключения:
+            ValueError: Если пароль не удовлетворяет какому-либо из условий
+                (сообщение исключения будет преобразовано FastAPI в 422 статус).
+        """
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Пароль должен содержать хотя бы одну заглавную букву")
+
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Пароль должен содержать хотя бы одну строчную букву")
+
+        if not re.search(r"\d", v):
+            raise ValueError("Пароль должен содержать хотя бы одну цифру")
+
+        if not re.search(r"[@$!%*?&#]", v):
+            raise ValueError(
+                "Пароль должен содержать хотя бы один специальный символ (@$!%*?&#)"
+            )
+
+        return v
 
 
 class UserResponse(BaseModel):

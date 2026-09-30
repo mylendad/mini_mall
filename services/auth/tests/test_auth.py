@@ -22,6 +22,13 @@ from app.main import app
 from app.models.user import RefreshToken, User
 from app.services.token import generate_opaque_token
 
+VALID_PASSWORD = "Secure$pass123"
+"""Пароль, удовлетворяющий политике сложности ``UserRegisterRequest``.
+
+Требования ``validate_password_complexity``: длина >= 8, заглавная буква,
+строчная буква, цифра и специальный символ из ``[@$!%*?&#]``.
+"""
+
 
 @pytest.fixture(scope="session")
 def postgres_container():
@@ -88,7 +95,7 @@ async def test_health_checks(client):
 @pytest.mark.asyncio
 async def test_register_and_login(client):
     email = "test@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     # Register
     response = await client.post(
@@ -142,6 +149,49 @@ async def test_register_and_login(client):
     assert response.status_code == 204
 
 
+@pytest.mark.parametrize(
+    ("email", "password", "violated"),
+    [
+        ("weak-upper@example.com", "securepass1$", "заглавная буква"),
+        ("weak-lower@example.com", "SECUREPASS1$", "строчная буква"),
+        ("weak-digit@example.com", "SecurePassab$", "цифра"),
+        ("weak-special@example.com", "SecurePass123", "специальный символ"),
+        ("weak-short@example.com", "Ab1$", "минимальная длина 8"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_register_rejects_weak_password(client, email, password, violated):
+    """Политика сложности пароля отвергает слабые пароли с 422."""
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 422, f"ожидался отказ из-за: {violated}"
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_validation_error_does_not_echo_password(client):
+    """Ответ 422 не содержит сам пароль и не падает на сериализации.
+
+    ``ErrorDetail.details`` — словарь, а ``exc.errors()`` возвращает список;
+    кроме того, в ``input`` лежит plaintext пароля, который нельзя отражать
+    клиенту.
+    """
+    weak = "weakpass1"
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "no-echo@example.com", "password": weak},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    assert body["request_id"]
+    errors = body["error"]["details"]["errors"]
+    assert errors and all("input" not in err for err in errors)
+    assert weak not in response.text
+
+
 @pytest.mark.asyncio
 async def test_users_me_requires_trusted_headers(client):
     response = await client.get("/api/v1/users/me", headers={"X-Request-ID": "req-123"})
@@ -160,7 +210,7 @@ async def test_users_me_requires_trusted_headers(client):
 @pytest.mark.asyncio
 async def test_token_reuse_detection(client):
     email = "reuse@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     await client.post(
         "/api/v1/auth/register", json={"email": email, "password": password}
@@ -194,7 +244,7 @@ async def test_token_reuse_detection(client):
 @pytest.mark.asyncio
 async def test_concurrent_refresh_single_wins(client):
     email = "concurrent@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     await client.post(
         "/api/v1/auth/register", json={"email": email, "password": password}
@@ -214,7 +264,7 @@ async def test_concurrent_refresh_single_wins(client):
 @pytest.mark.asyncio
 async def test_logout_idempotent(client):
     email = "logout@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     await client.post(
         "/api/v1/auth/register", json={"email": email, "password": password}
@@ -243,7 +293,7 @@ async def test_logout_idempotent(client):
 @pytest.mark.asyncio
 async def test_concurrent_register_same_email_one_wins(client):
     email = "race@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     resp_1, resp_2 = await asyncio.gather(
         client.post(
@@ -263,7 +313,7 @@ async def test_concurrent_register_same_email_one_wins(client):
 @pytest.mark.asyncio
 async def test_refresh_expired_token_rejected(client, db_session):
     email = "expired@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     await client.post(
         "/api/v1/auth/register", json={"email": email, "password": password}
@@ -292,7 +342,7 @@ async def test_refresh_expired_token_rejected(client, db_session):
 @pytest.mark.asyncio
 async def test_users_me_gateway_secret_boundary(client):
     email = "secret@example.com"
-    password = "securepassword123"
+    password = VALID_PASSWORD
 
     register_resp = await client.post(
         "/api/v1/auth/register", json={"email": email, "password": password}

@@ -9,10 +9,13 @@ Elasticsearch, после чего помечает строку обработ�
 тем, что запись в outbox находится в той же транзакции.
 """
 
+import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
@@ -37,13 +40,17 @@ class IndexOutbox(Base):
         Index("ix_index_outbox_processed_at", "processed_at"),
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    event_id = Column(UUID(as_uuid=True), unique=True, index=True, nullable=False)
-    envelope = Column(JSONB, nullable=False)
-    status = Column(String(32), nullable=False, default="pending")
-    attempt_count = Column(Integer, nullable=False, default=0)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), unique=True, index=True, nullable=False
+    )
+    envelope: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
-    processed_at = Column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

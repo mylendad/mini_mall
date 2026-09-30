@@ -27,7 +27,7 @@ class BaseAppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore" # для ключей вне класса для конкретного сервиса
     )
 
     app_name: str = "e-commerce-service"

@@ -55,25 +55,25 @@ services/auth/
 
 ### `users`
 
-| Поле | Тип | Свойства |
-| --- | --- | --- |
-| `id` | UUID | PK, по умолчанию `uuid.uuid4` |
-| `email` | VARCHAR(255) | UNIQUE, индекс |
-| `password_hash` | VARCHAR(255) | bcrypt `$2b$...` |
-| `roles` | JSON | например `["customer"]` |
-| `is_active` | BOOLEAN | флаг активности |
-| `created_at` / `updated_at` | TIMESTAMP(tz) | UTC, автозаполнение |
+| Поле                        | Тип        | Свойства                          |
+| ------------------------------- | ------------- | ----------------------------------------- |
+| `id`                          | UUID          | PK, по умолчанию`uuid.uuid4` |
+| `email`                       | VARCHAR(255)  | UNIQUE, индекс                      |
+| `password_hash`               | VARCHAR(255)  | bcrypt`$2b$...`                         |
+| `roles`                       | JSON          | например`["customer"]`          |
+| `is_active`                   | BOOLEAN       | флаг активности             |
+| `created_at` / `updated_at` | TIMESTAMP(tz) | UTC, автозаполнение         |
 
 ### `refresh_tokens`
 
-| Поле | Тип | Свойства |
-| --- | --- | --- |
-| `id` | UUID | PK |
-| `user_id` | UUID | FK → `users.id` ON DELETE CASCADE |
-| `token_hash` | VARCHAR(255) | SHA-256 непрозрачного токена, UNIQUE |
-| `expires_at` | TIMESTAMP(tz) | UTC |
-| `is_revoked` | BOOLEAN | признак отзыва |
-| `created_at` | TIMESTAMP(tz) | UTC |
+| Поле       | Тип        | Свойства                                        |
+| -------------- | ------------- | ------------------------------------------------------- |
+| `id`         | UUID          | PK                                                      |
+| `user_id`    | UUID          | FK →`users.id` ON DELETE CASCADE                     |
+| `token_hash` | VARCHAR(255)  | SHA-256 непрозрачного токена, UNIQUE |
+| `expires_at` | TIMESTAMP(tz) | UTC                                                     |
+| `is_revoked` | BOOLEAN       | признак отзыва                             |
+| `created_at` | TIMESTAMP(tz) | UTC                                                     |
 
 > В БД хранится **только хэш** refresh-токена: даже утечка базы не позволяет
 > использовать токены клиентов.
@@ -95,9 +95,7 @@ URL берётся из `app.config.settings.database_url` (переменные
 ### Пароли
 
 `hash_password`/`verify_password` в `app/services/security.py` используют
-**bcrypt напрямую** (не через passlib): начиная с bcrypt 5.x passlib
-несовместим и вызывает ошибки. Отклонение от исходной спецификации OpenSpec
-(там был `passlib[bcrypt]`) зафиксировано в docstrings модуля.
+**bcrypt.**
 
 - Хэш: `$2b$...` с уникальной солью.
 - Проверка: `bcrypt.checkpw`. Значение заведомо неверного хэша не ломает
@@ -209,5 +207,4 @@ docker run -p 8000:8000 -e DATABASE_URL=... -e JWT_SECRET=... auth-service
 
 ## Связанные документы
 
-- OpenSpec `01-auth-service`: `openspec/changes/01-auth-service/`.
 - Общая библиотека: [libs-common.md](../libs-common.md).
