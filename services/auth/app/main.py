@@ -8,7 +8,13 @@
 from contextlib import asynccontextmanager
 
 import structlog
-from common.errors import ErrorDetail, ErrorResponse
+from common.errors import (
+    HTTP_ERROR,
+    ErrorCode,
+    ErrorDetail,
+    ErrorResponse,
+    error_detail,
+)
 from common.logging import setup_logging
 from common.middleware import RequestIDMiddleware
 from common.observability import PrometheusMetricsMiddleware
@@ -95,11 +101,10 @@ def create_app() -> FastAPI:
         if isinstance(exc.detail, dict):
             error_data = exc.detail
         else:
-            error_data = {
-                "code": "HTTP_ERROR",
-                "message": str(exc.detail),
-                "details": None,
-            }
+            # ``HTTP_ERROR`` намеренно вне ``ErrorCode``: это сквозной код для
+            # чужих HTTPException, у которых статус и текст задаёт сам exception,
+            # так что зафиксировать пару «код ↔ статус» в каталоге нельзя.
+            error_data = error_detail(HTTP_ERROR, message=str(exc.detail))
         return _error_response(exc.status_code, ErrorDetail(**error_data), request)
 
     @app.exception_handler(RequestValidationError)
@@ -117,11 +122,7 @@ def create_app() -> FastAPI:
         ]
         return _error_response(
             422,
-            ErrorDetail(
-                code="VALIDATION_ERROR",
-                message="Request validation failed",
-                details={"errors": errors},
-            ),
+            error_detail(ErrorCode.VALIDATION_ERROR, details={"errors": errors}),
             request,
         )
 
@@ -134,7 +135,7 @@ def create_app() -> FastAPI:
         )
         return _error_response(
             500,
-            ErrorDetail(code="INTERNAL_ERROR", message="Internal server error"),
+            error_detail(ErrorCode.INTERNAL_ERROR),
             request,
         )
 

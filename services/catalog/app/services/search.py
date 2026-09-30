@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from common.errors import ErrorDetail
+from common.errors import ErrorCode, error_detail
 from elasticsearch import AsyncElasticsearch, TransportError
 from fastapi import HTTPException, status
 
@@ -135,11 +135,7 @@ def _unavailable() -> HTTPException:
     catalog_search_unavailable_total.inc()
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail=ErrorDetail(
-            code="SEARCH_UNAVAILABLE",
-            message="Search is temporarily unavailable",
-            details=None,
-        ).model_dump(),
+        detail=error_detail(ErrorCode.SEARCH_UNAVAILABLE),
     )
 
 
@@ -160,11 +156,7 @@ async def search_products(
     except InvalidSortError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=ErrorDetail(
-                code="INVALID_SORT",
-                message="Unsupported sort key or order",
-                details=None,
-            ).model_dump(),
+            detail=error_detail(ErrorCode.INVALID_SORT),
         )
     try:
         response = await search_breaker.call(

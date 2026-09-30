@@ -17,12 +17,13 @@ import json
 import uuid
 from typing import Any
 
-from fastapi import HTTPException, status
+from common.errors import ErrorCode, error_detail
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import cache
-from app.errors import IntegrityErrorMapper, error_detail
+from app.errors import IntegrityErrorMapper
 from app.models.catalog import Product
 from app.repositories.category_repo import CategoryRepository
 from app.repositories.product_repo import ProductRepository
@@ -63,13 +64,13 @@ class ProductsService:
         """
         if not await self._category_exists(payload.category_id):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=error_detail("INVALID_CATEGORY", "Category does not exist"),
+                status_code=ErrorCode.INVALID_CATEGORY.status_code,
+                detail=error_detail(ErrorCode.INVALID_CATEGORY),
             )
         if await self.repo.get_by_sku(payload.sku):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=error_detail("DUPLICATE_SKU", "Product SKU already exists"),
+                status_code=ErrorCode.DUPLICATE_SKU.status_code,
+                detail=error_detail(ErrorCode.DUPLICATE_SKU),
             )
         try:
             product = await self.repo.create(
@@ -89,9 +90,7 @@ class ProductsService:
             mapped = self.mapper.product_write(exc)
             if mapped is not None:
                 raise HTTPException(
-                    status_code=422
-                    if mapped["code"] == "INVALID_CATEGORY"
-                    else status.HTTP_409_CONFLICT,
+                    status_code=ErrorCode(mapped["code"]).status_code,
                     detail=mapped,
                 )
             raise
@@ -106,8 +105,8 @@ class ProductsService:
         product = await self.repo.get_by_id(product_id)
         if product is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=error_detail("PRODUCT_NOT_FOUND", "Product not found"),
+                status_code=ErrorCode.PRODUCT_NOT_FOUND.status_code,
+                detail=error_detail(ErrorCode.PRODUCT_NOT_FOUND),
             )
         return product
 
@@ -127,8 +126,8 @@ class ProductsService:
         product = await self.repo.get_by_id(product_id)
         if product is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=error_detail("PRODUCT_NOT_FOUND", "Product not found"),
+                status_code=ErrorCode.PRODUCT_NOT_FOUND.status_code,
+                detail=error_detail(ErrorCode.PRODUCT_NOT_FOUND),
             )
         payload = ProductResponse.model_validate(product).model_dump(mode="json")
         await cache.set_product(product_id, json.dumps(payload))
@@ -147,8 +146,10 @@ class ProductsService:
         """Возвращает ``(страница, всего)``; неверный ``sort`` -> ``422 INVALID_SORT``."""
         if sort not in LIST_SORT_KEYS:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=error_detail("INVALID_SORT", f"Unsupported sort key: {sort}"),
+                status_code=ErrorCode.INVALID_SORT.status_code,
+                detail=error_detail(
+                    ErrorCode.INVALID_SORT, f"Unsupported sort key: {sort}"
+                ),
             )
         try:
             return await self.repo.list(
@@ -161,8 +162,10 @@ class ProductsService:
             )
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=error_detail("INVALID_SORT", f"Unsupported sort key: {sort}"),
+                status_code=ErrorCode.INVALID_SORT.status_code,
+                detail=error_detail(
+                    ErrorCode.INVALID_SORT, f"Unsupported sort key: {sort}"
+                ),
             )
 
     async def update(self, product_id: uuid.UUID, payload: ProductUpdate) -> Product:
@@ -179,8 +182,8 @@ class ProductsService:
             existing = await self.repo.get_by_sku(payload.sku)
             if existing is not None and existing.id != product.id:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=error_detail("DUPLICATE_SKU", "Product SKU already exists"),
+                    status_code=ErrorCode.DUPLICATE_SKU.status_code,
+                    detail=error_detail(ErrorCode.DUPLICATE_SKU),
                 )
 
         changes: dict[str, Any] = {}
@@ -190,8 +193,8 @@ class ProductsService:
         ):
             if not await self._category_exists(payload.category_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=error_detail("INVALID_CATEGORY", "Category does not exist"),
+                    status_code=ErrorCode.INVALID_CATEGORY.status_code,
+                    detail=error_detail(ErrorCode.INVALID_CATEGORY),
                 )
             changes["category_id"] = payload.category_id
         for field in (
@@ -216,9 +219,7 @@ class ProductsService:
             mapped = self.mapper.product_write(exc)
             if mapped is not None:
                 raise HTTPException(
-                    status_code=422
-                    if mapped["code"] == "INVALID_CATEGORY"
-                    else status.HTTP_409_CONFLICT,
+                    status_code=ErrorCode(mapped["code"]).status_code,
                     detail=mapped,
                 )
             raise

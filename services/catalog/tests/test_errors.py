@@ -13,7 +13,7 @@ def _fake_integrity(constraint_name: str | None) -> saexc.IntegrityError:
 
 
 def test_error_detail_shape():
-    detail = error_detail("DUPLICATE_SKU", "duplicate", details={"sku": "X"})
+    detail = error_detail("DUPLICATE_SKU", message="duplicate", details={"sku": "X"})
     assert detail == {
         "code": "DUPLICATE_SKU",
         "message": "duplicate",

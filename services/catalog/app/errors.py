@@ -1,34 +1,15 @@
-"""Вспомогательные функции и маппер ошибок каталога.
+"""Маппер ошибок каталога.
 
-Формат ответа об ошибке задан в ``common.errors``::
-
-    {
-        "error": {"code": "...", "message": "...", "details": null},
-        "request_id": "..."
-    }
-
-:func:`error_detail` собирает только блок ``error``; ``request_id`` добавляется
-глобальным обработчиком исключений в ``app.main`` из ``request.state``.
+Формат ответа и каталог кодов заданы в ``common.errors``; здесь только
+перевод ошибок БД в коды этого каталога. Блок ``error`` собирает общий
+:func:`common.errors.error_detail`, а ``request_id`` добавляется глобальным
+обработчиком исключений в ``app.main`` из ``request.state``.
 """
 
 from __future__ import annotations
 
-from common.errors import ErrorDetail
+from common.errors import ErrorCode, error_detail
 from sqlalchemy.exc import IntegrityError
-
-
-def error_detail(code: str, message: str, details: dict | None = None) -> dict:
-    """Собирает блок ``error`` стандартного ответа об ошибке.
-
-    Параметры:
-        code: Машинный код ошибки (например, ``DUPLICATE_SKU``).
-        message: Человекочитаемое сообщение.
-        details: Дополнительный контекст (опционально).
-
-    Возвращает:
-        Словарь формата :class:`common.errors.ErrorDetail`.
-    """
-    return ErrorDetail(code=code, message=message, details=details).model_dump()
 
 
 class IntegrityErrorMapper:
@@ -36,7 +17,7 @@ class IntegrityErrorMapper:
 
     PostgreSQL-ограничения — единственный надёжный backstop для конкурентных
     дублей; маппер извлекает имя ограничения из диага ошибки и возвращает
-    словарь :func:`error_detail` либо ``None`` (если ограничение не распознано).
+    словарь :func:`common.errors.error_detail` либо ``None`` (если ограничение не распознано).
     """
 
     CATEGORY_NAME_KEY = "categories_name_key"
@@ -71,22 +52,20 @@ class IntegrityErrorMapper:
     def category_write(self, exc: IntegrityError) -> dict | None:
         """Дублирующее имя категории -> ``409 DUPLICATE_CATEGORY``."""
         if self._constraint_name(exc) == self.CATEGORY_NAME_KEY:
-            return error_detail("DUPLICATE_CATEGORY", "Category name already exists")
+            return error_detail(ErrorCode.DUPLICATE_CATEGORY)
         return None
 
     def product_write(self, exc: IntegrityError) -> dict | None:
         """Продукт: дубль SKU -> ``409 DUPLICATE_SKU``; FK на категорию -> ``422 INVALID_CATEGORY``."""
         name = self._constraint_name(exc)
         if name == self.PRODUCT_SKU_KEY:
-            return error_detail("DUPLICATE_SKU", "Product SKU already exists")
+            return error_detail(ErrorCode.DUPLICATE_SKU)
         if name == self.PRODUCT_CATEGORY_FK:
-            return error_detail("INVALID_CATEGORY", "Category does not exist")
+            return error_detail(ErrorCode.INVALID_CATEGORY)
         return None
 
     def category_delete(self, exc: IntegrityError) -> dict | None:
         """Удаление категории с продуктами (FK RESTRICT) -> ``409 CATEGORY_HAS_PRODUCTS``."""
         if self._constraint_name(exc) == self.PRODUCT_CATEGORY_FK:
-            return error_detail(
-                "CATEGORY_HAS_PRODUCTS", "Category has products and cannot be deleted"
-            )
+            return error_detail(ErrorCode.CATEGORY_HAS_PRODUCTS)
         return None

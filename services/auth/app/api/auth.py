@@ -9,13 +9,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from common.errors import ErrorCode, error_detail
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.errors import error_detail
 from app.repositories.auth_repo import AuthRepository
 from app.schemas.auth import (
     LogoutRequest,
@@ -55,8 +55,8 @@ async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_
     existing = await repo.get_user_by_email(payload.email)
     if existing:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("DUPLICATE_EMAIL", "Email already registered"),
+            status_code=ErrorCode.DUPLICATE_EMAIL.status_code,
+            detail=error_detail(ErrorCode.DUPLICATE_EMAIL),
         )
     hashed = hash_password(payload.password)
     try:
@@ -67,8 +67,8 @@ async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("DUPLICATE_EMAIL", "Email already registered"),
+            status_code=ErrorCode.DUPLICATE_EMAIL.status_code,
+            detail=error_detail(ErrorCode.DUPLICATE_EMAIL),
         )
     return UserResponse(id=str(user.id), email=user.email, roles=user.roles)
 
@@ -91,10 +91,8 @@ async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):
         or not user.is_active
     ):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail(
-                "INVALID_CREDENTIALS", "Invalid email, password, or inactive user"
-            ),
+            status_code=ErrorCode.INVALID_CREDENTIALS.status_code,
+            detail=error_detail(ErrorCode.INVALID_CREDENTIALS),
         )
 
     access_token = create_access_token(user.id, user.roles)
@@ -137,35 +135,30 @@ async def refresh_tokens(payload: RefreshRequest, db: AsyncSession = Depends(get
         token_obj = await repo.get_refresh_token_for_update(ref_hash)
         if not token_obj:
             error = HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("INVALID_REFRESH_TOKEN", "Refresh token not found"),
+                status_code=ErrorCode.INVALID_REFRESH_TOKEN.status_code,
+                detail=error_detail(ErrorCode.INVALID_REFRESH_TOKEN),
             )
         elif token_obj.is_revoked:
             # Token Reuse Detection — ретрансляция отозванного токена считается
             # признаком кражи: отзываем все refresh-токены пользователя.
             await repo.revoke_all_user_tokens(token_obj.user_id)
             error = HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail(
-                    "TOKEN_REUSE_DETECTED",
-                    "Revoked token reuse detected. All tokens revoked.",
-                ),
+                status_code=ErrorCode.TOKEN_REUSE_DETECTED.status_code,
+                detail=error_detail(ErrorCode.TOKEN_REUSE_DETECTED),
             )
         elif token_obj.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             token_obj.is_revoked = True
             error = HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error_detail("EXPIRED_REFRESH_TOKEN", "Refresh token expired"),
+                status_code=ErrorCode.EXPIRED_REFRESH_TOKEN.status_code,
+                detail=error_detail(ErrorCode.EXPIRED_REFRESH_TOKEN),
             )
         else:
             user = await repo.get_user_by_id(token_obj.user_id)
             if not user or not user.is_active:
                 token_obj.is_revoked = True
                 error = HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=error_detail(
-                        "INACTIVE_USER", "User is inactive or not found"
-                    ),
+                    status_code=ErrorCode.INACTIVE_USER.status_code,
+                    detail=error_detail(ErrorCode.INACTIVE_USER),
                 )
             else:
                 # Rotate
@@ -233,28 +226,20 @@ def get_trusted_user(
     """
     if settings.gateway_secret and x_gateway_secret != settings.gateway_secret:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail(
-                "INVALID_GATEWAY_SECRET",
-                "X-Gateway-Secret header is invalid or missing",
-            ),
+            status_code=ErrorCode.INVALID_GATEWAY_SECRET.status_code,
+            detail=error_detail(ErrorCode.INVALID_GATEWAY_SECRET),
         )
     if not x_user_id or not x_user_roles:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail(
-                "MISSING_USER_CONTEXT",
-                "X-User-ID and X-User-Roles headers are required",
-            ),
+            status_code=ErrorCode.MISSING_USER_CONTEXT.status_code,
+            detail=error_detail(ErrorCode.MISSING_USER_CONTEXT),
         )
     try:
         user_id = uuid.UUID(x_user_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail(
-                "INVALID_USER_CONTEXT", "X-User-ID header must contain a valid UUID"
-            ),
+            status_code=ErrorCode.INVALID_USER_CONTEXT.status_code,
+            detail=error_detail(ErrorCode.INVALID_USER_CONTEXT),
         )
     roles = [role.strip() for role in x_user_roles.split(",") if role.strip()]
     return TrustedUser(user_id=user_id, roles=roles)
@@ -281,8 +266,8 @@ async def get_current_user_profile(
     db_user = await repo.get_user_by_id(user.user_id)
     if not db_user or not db_user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_detail("USER_NOT_FOUND", "User not found or inactive"),
+            status_code=ErrorCode.USER_NOT_FOUND.status_code,
+            detail=error_detail(ErrorCode.USER_NOT_FOUND),
         )
 
     return UserResponse(id=str(db_user.id), email=db_user.email, roles=user.roles)

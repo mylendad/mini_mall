@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from common.errors import ErrorDetail
+from common.errors import ErrorCode, error_detail
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,21 +49,17 @@ async def reindex(
     if not _is_admin(x_user_roles, environment=settings.environment):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=ErrorDetail(
-                code="FORBIDDEN",
-                message="Admin role required for reindex",
-                details=None,
-            ).model_dump(),
+            detail=error_detail(ErrorCode.FORBIDDEN),
         )
     try:
         reindexed = await search_breaker.call(reindex_all, es.es_client, db)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=ErrorDetail(
-                code="SEARCH_UNAVAILABLE",
+            detail=error_detail(
+                ErrorCode.SEARCH_UNAVAILABLE,
                 message="Index unavailable",
                 details={"reason": str(exc)},
-            ).model_dump(),
+            ),
         ) from exc
     return {"index": es.CATALOG_INDEX, "reindexed": reindexed}

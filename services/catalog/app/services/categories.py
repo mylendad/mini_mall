@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import HTTPException, status
+from common.errors import ErrorCode, error_detail
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import IntegrityErrorMapper, error_detail
+from app.errors import IntegrityErrorMapper
 from app.models.catalog import Category
 from app.repositories.category_repo import CategoryRepository
 from app.schemas.catalog import CategoryCreate, CategoryUpdate
@@ -35,10 +36,8 @@ class CategoriesService:
         """Создаёт категорию; дубликат имени -> ``409 DUPLICATE_CATEGORY``."""
         if await self.repo.get_by_name(payload.name):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=error_detail(
-                    "DUPLICATE_CATEGORY", "Category name already exists"
-                ),
+                status_code=ErrorCode.DUPLICATE_CATEGORY.status_code,
+                detail=error_detail(ErrorCode.DUPLICATE_CATEGORY),
             )
         try:
             category = await self.repo.create(
@@ -49,7 +48,9 @@ class CategoriesService:
             await self.db.rollback()
             mapped = self.mapper.category_write(exc)
             if mapped is not None:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=mapped)
+                raise HTTPException(
+                    status_code=ErrorCode(mapped["code"]).status_code, detail=mapped
+                )
             raise
         return category
 
@@ -58,8 +59,8 @@ class CategoriesService:
         category = await self.repo.get_by_id(category_id)
         if category is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=error_detail("CATEGORY_NOT_FOUND", "Category not found"),
+                status_code=ErrorCode.CATEGORY_NOT_FOUND.status_code,
+                detail=error_detail(ErrorCode.CATEGORY_NOT_FOUND),
             )
         return category
 
@@ -76,10 +77,8 @@ class CategoriesService:
             and await self.repo.get_by_name(payload.name)
         ):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=error_detail(
-                    "DUPLICATE_CATEGORY", "Category name already exists"
-                ),
+                status_code=ErrorCode.DUPLICATE_CATEGORY.status_code,
+                detail=error_detail(ErrorCode.DUPLICATE_CATEGORY),
             )
         try:
             category = await self.repo.update(
@@ -90,7 +89,9 @@ class CategoriesService:
             await self.db.rollback()
             mapped = self.mapper.category_write(exc)
             if mapped is not None:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=mapped)
+                raise HTTPException(
+                    status_code=ErrorCode(mapped["code"]).status_code, detail=mapped
+                )
             raise
         return category
 
@@ -104,5 +105,7 @@ class CategoriesService:
             await self.db.rollback()
             mapped = self.mapper.category_delete(exc)
             if mapped is not None:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=mapped)
+                raise HTTPException(
+                    status_code=ErrorCode(mapped["code"]).status_code, detail=mapped
+                )
             raise
