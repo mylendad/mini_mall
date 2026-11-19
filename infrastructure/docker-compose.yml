@@ -63,3 +63,27 @@ services:
     ports:
       - "8123:8123"
       - "9000:9000"
+
+  cart-service:
+    build:
+      context: ..
+      dockerfile: services/cart/Dockerfile
+    image: cart-service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CATALOG_BASE_URL: http://host.docker.internal:8000
+      APP_NAME: cart-service
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    ports:
+      - "8100:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
