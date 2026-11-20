@@ -20,6 +20,7 @@ mini_mall_2/
 ├── libs/common/         # пакет common (общая инфраструктура)
 ├── services/
 │   ├── auth/            # автономный сервис аутентификации
+│   ├── inventory/       # автономный сервис складского учёта и резервов
 │   └── template/        # шаблон нового сервиса
 ├── infrastructure/      # docker-compose и инфраструктурные Dockerfile
 ├── tests/               # сквозные тесты платформы (Testcontainers)
@@ -51,5 +52,6 @@ cp services/auth/.env.example services/auth/.env   # если есть
 | [Быстрый старт](docs/getting-started.md) | Установка, тесты, запуск |
 | [Общая библиотека](docs/libs-common.md) | Пакет `common`, подключение, правила |
 | [Сервис auth](docs/services/auth.md) | Конфигурация, БД, API, безопасность, тесты |
+| [Сервис inventory](docs/services/inventory.md) | Склад, резервы, сага, outbox → Kafka, low-stock, тесты |
 | [Контейнеризация](docs/docker.md) | Dockerfile, сборка, compose |
 | [Генерация API-документации](docs/code-reference.md) | pdoc из docstrings |

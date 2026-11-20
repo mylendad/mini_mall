@@ -183,6 +183,28 @@ class ErrorCode(StrEnum):
         "Unsupported sort key or order",
     )
 
+    # inventory-service.
+    STOCK_ITEM_NOT_FOUND = (
+        "STOCK_ITEM_NOT_FOUND",
+        HTTPStatus.NOT_FOUND,
+        "Stock item not found",
+    )
+    INSUFFICIENT_STOCK = (
+        "INSUFFICIENT_STOCK",
+        HTTPStatus.CONFLICT,
+        "Insufficient stock",
+    )
+    RESERVATION_NOT_FOUND = (
+        "RESERVATION_NOT_FOUND",
+        HTTPStatus.NOT_FOUND,
+        "Reservation not found",
+    )
+    INVALID_RESERVATION_STATE = (
+        "INVALID_RESERVATION_STATE",
+        HTTPStatus.CONFLICT,
+        "Reservation is not in active state",
+    )
+
 
 #: Сквозной код для HTTPException, пришедших не из нашего кода (роутинг Starlette,
 #: 404 и т. п.): статус и текст задаёт само исключение, поэтому связать его с

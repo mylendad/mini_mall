@@ -9,6 +9,8 @@ services:
       POSTGRES_DB: ecommerce
     ports:
       - "5432:5432"
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -82,6 +84,45 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  inventory-migrate:
+    build:
+      context: ..
+      dockerfile: services/inventory/Dockerfile
+    image: inventory-service
+    command: ['sh', '-c', 'cd /app/services/inventory && alembic -c alembic.ini upgrade head']
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/mini_mall_inventory
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  inventory-service:
+    build:
+      context: ..
+      dockerfile: services/inventory/Dockerfile
+    image: inventory-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/mini_mall_inventory
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_NAME: inventory-service
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    ports:
+      - "8200:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      inventory-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready').status==200 else 1)\""]
       interval: 10s
